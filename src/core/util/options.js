@@ -26,19 +26,29 @@ import {
  * how to merge a parent option value and a child option
  * value into the final value.
  */
+// 这句代码就定义了 strats 变量，且它是一个常量，这个常量的值为 config.optionMergeStrategies，这个 config 对象是全局配置对象
+// config.optionMergeStrategies 是一个合并选项的策略对象，
+// 这个对象下包含很多函数，这些函数就可以认为是合并特定选项的策略。这样不同的选项使用不同的合并策略
 const strats = config.optionMergeStrategies
 
 /**
  * Options with restrictions
  */
 if (process.env.NODE_ENV !== 'production') {
+  // 非生产环境下在 strats 策略对象上添加两个策略(两个属性)分别是 el 和 propsData，且这两个属性的值是一个函数
+  // 这两个策略函数是用来合并 el 选项和 propsData 选项的
+  // trats.el 和 strats.propsData 这两个策略函数是只有在非生产环境才有的，在生产环境下访问这两个函数将会得到 undefined
   strats.el = strats.propsData = function (parent, child, vm, key) {
+    // 如果策略函数中拿不到 vm 参数，那么处理的就是子组件的选项, 因为在子组件调用mergeOptions的时候，没有传递vm参数
+    // 详见 core/global-api/extend.js 文件的 Vue.extend 方法
+    // 如果没有传递这个参数，那么便会给你一个警告，提示你 el 选项或者 propsData 选项只能在使用 new 操作符创建实例的时候可用
     if (!vm) {
       warn(
         `option "${key}" can only be used during instance ` +
         'creation with the `new` keyword.'
       )
     }
+    // 直接调用了 defaultStrat 函数并返回
     return defaultStrat(parent, child)
   }
 }
@@ -46,10 +56,14 @@ if (process.env.NODE_ENV !== 'production') {
 /**
  * Helper that recursively merges two data objects together.
  */
+// 所以 mergeData 函数接收的两个参数就是两个纯对象
 function mergeData(to: Object, from: ?Object): Object {
+  // 如果没有 parentVal 产生的值，就直接使用 childVal 产生的值
   if (!from) return to
   let key, toVal, fromVal
 
+  // Object.keys()返回属性key，但不包括不可枚举的属性
+  // Reflect.ownKeys()返回所有属性key 包括Symbol
   const keys = hasSymbol
     ? Reflect.ownKeys(from)
     : Object.keys(from)
@@ -60,6 +74,7 @@ function mergeData(to: Object, from: ?Object): Object {
     if (key === '__ob__') continue
     toVal = to[key]
     fromVal = from[key]
+    // 如果 from 对象中的 key 不在 to 对象中，则使用 set 函数为 to 对象设置 key 及相应的值。
     if (!hasOwn(to, key)) {
       set(to, key, fromVal)
     } else if (
@@ -67,11 +82,22 @@ function mergeData(to: Object, from: ?Object): Object {
       isPlainObject(toVal) &&
       isPlainObject(fromVal)
     ) {
+      // 如果 from 对象中的 key 在 to 对象中，且这两个属性的值都是纯对象则递归地调用 mergeData 函数进行深度合并。
       mergeData(toVal, fromVal)
     }
   }
+  // 将 from 对象的属性混合到 to 对象中，也可以说是将 parentVal 对象的属性混合到 childVal 中，最后返回的是处理后的 childVal 对象
   return to
 }
+
+
+/**
+ *  为什么最终 strats.data 会被处理成一个函数？
+    这是因为，通过函数返回数据对象，保证了每个组件实例都有一个唯一的数据副本，避免了组件间数据互相影响。
+    Vue 的初始化的时候大家会看到，在初始化数据状态的时候，就是通过执行 strats.data 函数来获取数据并对其进行处理的。
+ */
+
+
 
 /**
  * Data
@@ -83,6 +109,7 @@ export function mergeDataOrFn(
 ): ?Function {
   if (!vm) {
     // in a Vue.extend merge, both should be functions
+    // 选项是在调用 Vue.extend 函数时进行合并处理的，此时父子 data 选项都应该是函数。
     if (!childVal) {
       return parentVal
     }
@@ -94,8 +121,13 @@ export function mergeDataOrFn(
     // merged result of both functions... no need to
     // check if parentVal is a function here because
     // it has to be a function to pass previous merges.
+    // mergeDataOrFn 函数在处理子组件选项时返回的总是一个函数，
+    // 这也就间接导致 strats.data 策略函数在处理子组件选项时返回的也总是一个函数。
     return function mergedDataFn() {
       return mergeData(
+        // childVal 要么是函数，要么就是一个纯对象。所以如果是函数的话就通过执行该函数从而获取到一个纯对象，
+        // 所以类似上面那段代码中判断 childVal 和 parentVal 的类型是否是函数的目的只有一个，获取数据对象(纯对象)
+        // 下同
         typeof childVal === 'function' ? childVal.call(this, this) : childVal,
         typeof parentVal === 'function' ? parentVal.call(this, this) : parentVal
       )
@@ -118,12 +150,16 @@ export function mergeDataOrFn(
   }
 }
 
+// 在 strats 策略对象上添加 data 策略函数，用来合并处理 data 选项
 strats.data = function (
   parentVal: any,
   childVal: any,
   vm?: Component
 ): ?Function {
   if (!vm) {
+    // 判断是否传递了子组件的 data 选项(即：childVal)，并且检测 childVal 的类型是不是 function，
+    // 如果 childVal 的类型不是 function 则会给你一个警告，
+    // 也就是说 childVal 应该是一个函数，如果不是函数会提示你 data 的类型必须是一个函数
     if (childVal && typeof childVal !== 'function') {
       process.env.NODE_ENV !== 'production' && warn(
         'The "data" option should be a function ' +
@@ -131,12 +167,14 @@ strats.data = function (
         'definitions.',
         vm
       )
-
+      // 直接返回 parentVal
       return parentVal
     }
+    // 最终都是调用 mergeDataOrFn 函数进行处理的，并且以 mergeDataOrFn 函数的返回值作为策略函数的最终返回值。
     return mergeDataOrFn(parentVal, childVal)
   }
 
+  // 有一点不同的是在处理非子组件选项的时候所调用的 mergeDataOrFn 函数多传递了一个参数 vm
   return mergeDataOrFn(parentVal, childVal, vm)
 }
 
@@ -261,6 +299,8 @@ strats.provide = mergeDataOrFn
 /**
  * Default strategy.
  */
+// 它是一个默认的策略，当一个选项不需要特殊处理的时候就使用默认的合并策略，
+// 它的逻辑很简单：只要子选项不是 undefined 那么就是用子选项，否则使用父选项
 const defaultStrat = function (parentVal: any, childVal: any): any {
   return childVal === undefined
     ? parentVal
@@ -542,6 +582,7 @@ export function mergeOptions(
     }
   }
   function mergeField(key) {
+    // 第一句代码定义了一个常量 strat，它的值是通过指定的 key 访问 strats 对象得到的，而当访问的属性不存在时，则使用 defaultStrat 作为值。
     const strat = strats[key] || defaultStrat
     options[key] = strat(parent[key], child[key], vm, key)
   }
