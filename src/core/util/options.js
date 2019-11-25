@@ -418,8 +418,19 @@ function normalizeInject(options: Object, vm: ?Component) {
 function normalizeDirectives(options: Object) {
   const dirs = options.directives
   if (dirs) {
+    /**
+     * test1: {
+        bind: function () {
+          console.log('v-test1')
+        }
+      },
+      test2: function () {
+        console.log('v-test2')
+      }
+     */
     for (const key in dirs) {
       const def = dirs[key]
+      // 发现你注册的指令是一个函数的时候，则将该函数作为对象形式的 bind 属性和 update 属性的值
       if (typeof def === 'function') {
         dirs[key] = { bind: def, update: def }
       }
@@ -440,6 +451,22 @@ function assertObjectType(name: string, value: any, vm: ?Component) {
 /**
  * Merge two option objects into a new one.
  * Core utility used in both instantiation and inheritance.
+ */
+/**
+ * parent options
+ * Vue.options = {
+    components: {
+        KeepAlive,
+        Transition,
+        TransitionGroup
+    },
+    directives:{
+        model,
+        show
+    },
+    filters: Object.create(null),
+    _base: Vue
+  }
  */
 export function mergeOptions(
   parent: Object,
@@ -488,9 +515,11 @@ export function mergeOptions(
   // the result of another mergeOptions call.
   // Only merged options has the _base property.
   if (!child._base) {
+    // child.extends 是否存在，如果存在的话就递归调用 mergeOptions 函数将 parent 与 child.extends 进行合并
     if (child.extends) {
       parent = mergeOptions(parent, child.extends, vm)
     }
+    // child.mixins 选项是否存在，如果存在则使用同样的方式进行操作，不同的是，由于 mixins 是一个数组所以要遍历一下
     if (child.mixins) {
       for (let i = 0, l = child.mixins.length; i < l; i++) {
         parent = mergeOptions(parent, child.mixins[i], vm)
@@ -498,12 +527,16 @@ export function mergeOptions(
     }
   }
 
+  // 第一句和最后一句说明了 mergeOptions 函数的的确确返回了一个新的对象
   const options = {}
   let key
   for (key in parent) {
     mergeField(key)
   }
   for (key in child) {
+    // 作用是用来判断一个属性是否是对象自身的属性(不包括原型上的)。所以这个判断语句的意思是，
+    // 如果 child 对象的键也在 parent 上出现，那么就不要再调用 mergeField 了，
+    // 因为在上一个 for in 循环中已经调用过了，这就避免了重复调用。
     if (!hasOwn(parent, key)) {
       mergeField(key)
     }
