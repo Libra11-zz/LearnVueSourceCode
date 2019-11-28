@@ -90,6 +90,7 @@ export function initMixin(Vue: Class<Component>) {
     }
     /* istanbul ignore else */
     if (process.env.NODE_ENV !== 'production') {
+      // 在实例对象 vm 上添加 _renderProxy 属性
       initProxy(vm)
     } else {
       vm._renderProxy = vm

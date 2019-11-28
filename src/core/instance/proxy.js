@@ -2,9 +2,10 @@
 
 import config from 'core/config'
 import { warn, makeMap, isNative } from '../util/index'
-
+// // 声明 initProxy 变量
 let initProxy
 
+// 在生产环境下我们导出的 initProxy 实际上就是 undefined。只有在非生产环境下导出的 initProxy 才会有值
 if (process.env.NODE_ENV !== 'production') {
   const allowedGlobals = makeMap(
     'Infinity,undefined,NaN,isFinite,isNaN,' +
@@ -34,13 +35,14 @@ if (process.env.NODE_ENV !== 'production') {
     )
   }
 
+  // hasProxy 顾名思义，这是用来判断宿主环境是否支持 js 原生的 Proxy 特性的
   const hasProxy =
     typeof Proxy !== 'undefined' && isNative(Proxy)
 
   if (hasProxy) {
     const isBuiltInModifier = makeMap('stop,prevent,self,ctrl,shift,alt,meta,exact')
     config.keyCodes = new Proxy(config.keyCodes, {
-      set (target, key, value) {
+      set(target, key, value) {
         if (isBuiltInModifier(key)) {
           warn(`Avoid overwriting built-in modifier in config.keyCodes: .${key}`)
           return false
@@ -53,7 +55,7 @@ if (process.env.NODE_ENV !== 'production') {
   }
 
   const hasHandler = {
-    has (target, key) {
+    has(target, key) {
       const has = key in target
       const isAllowed = allowedGlobals(key) ||
         (typeof key === 'string' && key.charAt(0) === '_' && !(key in target.$data))
@@ -66,7 +68,7 @@ if (process.env.NODE_ENV !== 'production') {
   }
 
   const getHandler = {
-    get (target, key) {
+    get(target, key) {
       if (typeof key === 'string' && !(key in target)) {
         if (key in target.$data) warnReservedPrefix(target, key)
         else warnNonPresent(target, key)
@@ -75,10 +77,14 @@ if (process.env.NODE_ENV !== 'production') {
     }
   }
 
-  initProxy = function initProxy (vm) {
+  //  initProxy 的作用实际上就是对实例对象 vm 的代理，通过原生的 Proxy 实现
+  initProxy = function initProxy(vm) {
     if (hasProxy) {
       // determine which proxy handler to use
       const options = vm.$options
+      // 如果 Proxy 存在，那么将会使用 Proxy 对 vm 做一层代理，代理对象赋值给 vm._renderProxy，
+      // 所以今后对 vm._renderProxy 的访问，如果有代理那么就会被拦截。代理对象配置参数是 handlers，
+      // 可以发现 handlers 既可能是 getHandler 又可能是 hasHandler，至于到底使用哪个，是由判断条件决定的
       const handlers = options.render && options.render._withStripped
         ? getHandler
         : hasHandler

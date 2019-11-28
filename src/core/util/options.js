@@ -180,11 +180,105 @@ strats.data = function (
 
 /**
  * Hooks and props are merged as arrays.
+ *  new Vue({
+      created: function () {
+        console.log('created')
+      }
+    })
+    如果以这段代码为例，那么对于 strats.created 策略函数来讲(注意这里的 strats.created 就是 mergeHooks)，
+    childVal 就是我们例子中的 created 选项，它是一个函数。parentVal 应该是 Vue.options.created，
+    但 Vue.options.created 是不存在的，所以最终经过 strats.created 函数的处理将返回一个数组：
+
+    options.created = [
+      function () {
+        console.log('created')
+      }  
+    ]
+    再看下面的例子：
+
+    const Parent = Vue.extend({
+      created: function () {
+        console.log('parentVal')
+      }
+    })
+
+    const Child = new Parent({
+      created: function () {
+        console.log('childVal')
+      }
+    })
+    其中 Child 是使用 new Parent 生成的，所以对于 Child 来讲，childVal 是：
+
+    created: function () {
+      console.log('childVal')
+    }
+    而 parentVal 已经不是 Vue.options.created 了，而是 Parent.options.created，那么 Parent.options.created 是什么呢？它其实是通过 Vue.extend 函数内部的 mergeOptions 处理过的，所以它应该是这样的：
+
+    Parent.options.created = [
+      created: function () {
+        console.log('parentVal')
+      }
+    ]
+    所以这个例子最终的结果就是既有 childVal，又有 parentVal，那么根据 mergeHooks 函数的逻辑：
+
+    function mergeHook (
+      parentVal: ?Array<Function>,
+      childVal: ?Function | ?Array<Function>
+    ): ?Array<Function> {
+      return childVal
+        ? parentVal
+          // 这里，合并且生成一个新数组
+          ? parentVal.concat(childVal)
+          : Array.isArray(childVal)
+            ? childVal
+            : [childVal]
+        : parentVal
+    }
+    关键在这句：parentVal.concat(childVal)，将 parentVal 和 childVal 合并成一个数组。所以最终结果如下：
+
+    [
+      created: function () {
+        console.log('parentVal')
+      },
+      created: function () {
+        console.log('childVal')
+      }
+    ]
+    另外我们注意第三个三目运算符：
+
+    : Array.isArray(childVal)
+      ? childVal
+      : [childVal]
+    它判断了 childVal 是不是数组，这说明什么？说明了生命周期钩子是可以写成数组的，虽然 Vue 的文档里没有，不信你可以试试：
+
+    new Vue({
+      created: [
+        function () {
+          console.log('first')
+        },
+        function () {
+          console.log('second')
+        },
+        function () {
+          console.log('third')
+        }
+      ]
+    })
+    钩子函数将按顺序执行，因此先执行父选项中的钩子函数，后执行子选项中的钩子函数。
  */
 function mergeHook(
   parentVal: ?Array<Function>,
   childVal: ?Function | ?Array<Function>
 ): ?Array<Function> {
+  /**
+   * return (是否有 childVal，即判断组件的选项中是否有对应名字的生命周期钩子函数)
+      ? 如果有 childVal 则判断是否有 parentVal
+        ? 如果有 parentVal 则使用 concat 方法将二者合并为一个数组
+        : 如果没有 parentVal 则判断 childVal 是不是一个数组
+          ? 如果 childVal 是一个数组则直接返回
+          : 否则将其作为数组的元素，然后返回数组
+      : 如果没有 childVal 则直接返回 parentVal
+   */
   const res = childVal
     ? parentVal
       ? parentVal.concat(childVal)
@@ -197,6 +291,7 @@ function mergeHook(
     : res
 }
 
+// 这个函数是为了剔除所有合并后钩子函数中的重复项
 function dedupeHooks(hooks) {
   const res = []
   for (let i = 0; i < hooks.length; i++) {
@@ -206,7 +301,8 @@ function dedupeHooks(hooks) {
   }
   return res
 }
-
+// 使用 forEach 遍历 LIFECYCLE_HOOKS 常量
+// 在 strats 策略对象上添加用来合并各个生命周期钩子选项的策略函数，并且这些生命周期钩子选项的策略函数相同：都是 mergeHook 函数
 LIFECYCLE_HOOKS.forEach(hook => {
   strats[hook] = mergeHook
 })
@@ -217,6 +313,64 @@ LIFECYCLE_HOOKS.forEach(hook => {
  * When a vm is present (instance creation), we need to do
  * a three-way merge between constructor options, instance
  * options and parent options.
+ * 资源(assets)选项的合并策略
+ * 在 Vue 中 directives、filters 以及 components 被认为是资源，其实很好理解，指令、过滤器和组件都是可以作为第三方应用来提供的
+ */
+/**
+ *  大家知道任何组件的模板中我们都可以直接使用 <transition/> 组件或者 <keep-alive/> 等，
+ * 但是我们并没有在我们自己的组件实例的 components 选项中显式地声明这些组件。那么这是怎么做到的呢？其实答案就在 mergeAssets 函数中。以下面的代码为例：
+
+    var v = new Vue({
+      el: '#app',
+      components: {
+        ChildComponent: ChildComponent
+      }
+    })
+    上面的代码中，我们创建了一个 Vue 实例，并注册了一个子组件 ChildComponent，此时 mergeAssets 方法内的 childVal 就是例子中的 components 选项：
+
+    components: {
+      ChildComponent: ChildComponent
+    }
+    而 parentVal 就是 Vue.options.components，我们知道 Vue.options 如下：
+
+    Vue.options = {
+      components: {
+        KeepAlive,
+        Transition,
+        TransitionGroup
+      },
+      directives: Object.create(null),
+      directives:{
+        model,
+        show
+      },
+      filters: Object.create(null),
+      _base: Vue
+    }
+    所以 Vue.options.components 就应该是一个对象：
+
+    {
+      KeepAlive,
+      Transition,
+      TransitionGroup
+    }
+    也就是说 parentVal 就是如上包含三个内置组件的对象，所以经过如下这句话之后：
+
+    const res = Object.create(parentVal || null)
+    你可以通过 res.KeepAlive 访问到 KeepAlive 对象，因为虽然 res 对象自身属性没有 KeepAlive，但是它的原型上有。
+
+    然后再经过 return extend(res, childVal) 这句话之后，res 变量将被添加 ChildComponent 属性，最终 res 如下：
+
+    res = {
+      ChildComponent
+      // 原型
+      __proto__: {
+        KeepAlive,
+        Transition,
+        TransitionGroup
+      }
+    }
+    所以这就是为什么我们不用显式地注册组件就能够使用一些内置组件的原因，同时这也是内置组件的实现方式，通过 Vue.extend 创建出来的子类也是一样的道理，一层一层地通过原型进行组件的搜索
  */
 function mergeAssets(
   parentVal: ?Object,
@@ -224,8 +378,11 @@ function mergeAssets(
   vm?: Component,
   key: string
 ): Object {
+  // 首先以 parentVal 为原型创建对象 res，然后判断是否有 childVal，
+  // 如果有的话使用 extend 函数将 childVal 上的属性混合到 res 对象上并返回。如果没有 childVal 则直接返回 res。
   const res = Object.create(parentVal || null)
   if (childVal) {
+    // 用来检测 childVal 是不是一个纯对象的，如果不是纯对象会给你一个警告
     process.env.NODE_ENV !== 'production' && assertObjectType(key, childVal, vm)
     return extend(res, childVal)
   } else {
@@ -233,6 +390,11 @@ function mergeAssets(
   }
 }
 
+/**
+ * 'component',
+   'directive',
+   'filter'
+ */
 ASSET_TYPES.forEach(function (type) {
   strats[type + 's'] = mergeAssets
 })
@@ -242,6 +404,8 @@ ASSET_TYPES.forEach(function (type) {
  *
  * Watchers hashes should not overwrite one
  * another, so we merge them as arrays.
+ * 在 strats 策略对象上添加 watch 策略函数。所以 strats.watch 策略函数应该是合并处理 watch 选项的
+ * 被合并处理后的 watch 选项下的每个键值，有可能是一个数组，也有可能是一个函数。
  */
 strats.watch = function (
   parentVal: ?Object,
@@ -250,31 +414,48 @@ strats.watch = function (
   key: string
 ): ?Object {
   // work around Firefox's Object.prototype.watch...
+  // 在 Firefox 浏览器中 Object.prototype 拥有原生的 watch 函数，
+  // 所以即便一个普通的对象你没有定义 watch 属性，但是依然可以通过原型链访问到原生的 watch 属性
   if (parentVal === nativeWatch) parentVal = undefined
   if (childVal === nativeWatch) childVal = undefined
   /* istanbul ignore if */
+  // 检测了是否有 childVal，即组件选项是否有 watch 选项，如果没有的话，直接以 parentVal 为原型创建对象并返回(如果有 parentVal 的话)
   if (!childVal) return Object.create(parentVal || null)
   if (process.env.NODE_ENV !== 'production') {
     assertObjectType(key, childVal, vm)
   }
+  // 判断是否有 parentVal，如果没有的话则直接返回 childVal，即直接使用组件选项的 watch
   if (!parentVal) return childVal
+  // 如果存在 parentVal，那么代码继续执行，此时 parentVal 以及 childVal 都将存在，那么就需要做合并处理了
+  // // 定义 ret 常量，其值为一个对象
   const ret = {}
+  // // 将 parentVal 的属性混合到 ret 中，后面处理的都将是 ret 对象，最后返回的也是 ret 对象
   extend(ret, parentVal)
+  // 遍历 childVal
   for (const key in childVal) {
+    // 由于遍历的是 childVal，所以 key 是子选项的 key，父选项中未必能获取到值，所以 parent 未必有值
     let parent = ret[key]
+    // child 是肯定有值的，因为遍历的就是 childVal 本身
     const child = childVal[key]
+    // // 这个 if 分支的作用就是如果 parent 存在，就将其转为数组
     if (parent && !Array.isArray(parent)) {
       parent = [parent]
     }
+    // // 最后，如果 parent 存在，此时的 parent 应该已经被转为数组了，所以直接将 child concat 进去
     ret[key] = parent
       ? parent.concat(child)
+      // // 如果 parent 不存在，直接将 child 转为数组返回
       : Array.isArray(child) ? child : [child]
   }
+  // // 最后返回新的 ret 对象
   return ret
 }
 
 /**
  * Other object hashes.
+ * 选项 props、methods、inject、computed 的合并策略
+ * 对于 props、methods、inject 以及 computed 这四个选项有一个共同点，就是它们的结构都是纯对象
+ * 虽然我们在书写 props 或者 inject 选项的时候可能是一个数组，但是 Vue 内部都将其规范化为了一个对象
  */
 strats.props =
   strats.methods =
@@ -285,15 +466,21 @@ strats.props =
     vm?: Component,
     key: string
   ): ?Object {
+    // 如果存在 childVal，那么在非生产环境下要检查 childVal 的类型
     if (childVal && process.env.NODE_ENV !== 'production') {
       assertObjectType(key, childVal, vm)
     }
+    // parentVal 不存在的情况下直接返回 childVal
     if (!parentVal) return childVal
+    // 如果 parentVal 存在，则创建 ret 对象，然后分别将 parentVal 和 childVal 的属性混合到 ret 中，
+    // 注意：childVal 将覆盖 parentVal 的同名属性
     const ret = Object.create(null)
     extend(ret, parentVal)
     if (childVal) extend(ret, childVal)
+    // 最后返回 ret 对象。
     return ret
   }
+// provide 选项的合并策略与 data 选项的合并策略相同，都是使用 mergeDataOrFn 函数
 strats.provide = mergeDataOrFn
 
 /**
